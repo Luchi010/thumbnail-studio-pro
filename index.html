@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="ja" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>サムネイル作成 Studio Pro</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            purple: '#8b5cf6',
+                            pink: '#ec4899',
+                            dark: '#0a0a0f'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@800;900&family=Noto+Sans+JP:wght@800;900&display=swap" rel="stylesheet">
+
+    <!-- Fabric.js Canvas Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+
+    <style>
+        body {
+            font-family: 'Noto Sans JP', sans-serif;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+
+        /* 16:9 Aspect Ratio Canvas Wrapper */
+        .canvas-scaler-wrapper {
+            position: relative;
+            width: 100%;
+            max-width: 960px;
+            margin: 0 auto;
+            aspect-ratio: 16 / 9;
+            background-color: #0a0a0f;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 20px 35px -10px rgba(0, 0, 0, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+        }
+
+        .canvas-container {
+            margin: 0 auto !important;
+            transform-origin: top left;
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #121215;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #3f3f46;
+            border-radius: 4px;
+        }
+
+        .tab-btn.active {
+            background-color: #1f1f23;
+            color: #ec4899;
+            border-bottom: 3px solid #ec4899;
+        }
+
+        input[type=range] {
+            accent-color: #ec4899;
+        }
+
+        /* Toggle Switch Styling */
+        .toggle-checkbox:checked {
+            right: 0;
+            border-color: #ec4899;
+        }
+        .toggle-checkbox:checked + .toggle-label {
+            background-color: #ec4899;
+        }
+    </style>
+</head>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen flex flex-col antialiased">
+
+    <header class="bg-zinc-900/90 border-b border-zinc-800 px-4 py-2.5 flex items-center justify-between sticky top-0 z-40 backdrop-blur">
+        <div class="flex items-center gap-2.5">
+            <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-purple-600 via-pink-500 to-amber-400 flex items-center justify-center text-white shadow-md">
+                <i class="fa-solid fa-wand-magic-sparkles text-sm"></i>
+            </div>
+            <div>
+                <h1 class="font-black text-sm md:text-base leading-none bg-gradient-to-r from-white via-pink-200 to-purple-300 bg-clip-text text-transparent">
+                    サムネイル Studio Pro
+                </h1>
+                <p class="text-[10px] text-zinc-400 mt-0.5">60%フェード機能 ＆ 連続保存対応</p>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-2">
+            <button id="resetCanvasBtn" class="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-rose-950/50 text-xs text-rose-400 border border-zinc-700 transition flex items-center gap-1.5 active:scale-95">
+                <i class="fa-solid fa-rotate-left"></i>
+                <span class="hidden sm:inline">リセット</span>
+            </button>
+
+            <button id="downloadBtn" class="px-4 py-1.5 rounded-lg bg-gradient-to-r from-pink-500 to-purple-600 hover:opacity-90 font-bold text-xs text-white shadow-lg shadow-pink-600/30 transition flex items-center gap-1.5 active:scale-95">
+                <i class="fa-solid fa-download"></i>
+                <span>画像を保存 (PNG)</span>
+            </button>
+        </div>
+    </header>
+
+    <main class="flex-1 flex flex-col lg:flex-row overflow-hidden max-w-7xl w-full mx-auto">
+
+        <!-- Left/Top Preview Area -->
+        <section class="w-full lg:w-3/5 bg-zinc-950 p-2 sm:p-4 flex flex-col items-center justify-center border-b lg:border-b-0 lg:border-r border-zinc-800">
+            
+            <div class="w-full flex items-center justify-between text-[11px] text-zinc-400 mb-1.5 px-1 max-w-[960px]">
+                <span class="flex items-center gap-1 font-bold">
+                    <i class="fa-solid fa-display text-pink-400"></i>
+                    プレビュー (1280 × 720)
+                </span>
+                <span class="text-[10px] text-zinc-400 bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">
+                    <i class="fa-solid fa-lock text-xs mr-1 text-pink-400"></i>自動整列・手動固定
+                </span>
+            </div>
+
+            <!-- Canvas Container -->
+            <div id="canvasScaler" class="canvas-scaler-wrapper">
+                <canvas id="thumbnailCanvas" width="1280" height="720"></canvas>
+            </div>
+
+            <p class="text-[10px] text-zinc-500 mt-2 text-center">
+                ※左メイン画像 (60%右フェード透過対応) / 右サブ画像＋「左付属画像」＋「×数量」
+            </p>
+        </section>
+
+        <aside class="w-full lg:w-2/5 bg-zinc-900 flex flex-col flex-1 overflow-hidden h-[55vh] lg:h-auto">
+            
+            <!-- Navigation Tabs -->
+            <div class="grid grid-cols-4 bg-zinc-950 border-b border-zinc-800 text-xs font-bold text-zinc-400">
+                <button class="tab-btn active py-3 flex flex-col items-center gap-1 transition" data-tab="sub-img-tab">
+                    <i class="fa-solid fa-list-ol text-base"></i>
+                    <span class="text-[11px]">右サブ (付属＆×)</span>
+                </button>
+                <button class="tab-btn py-3 flex flex-col items-center gap-1 transition" data-tab="main-img-tab">
+                    <i class="fa-solid fa-image text-base"></i>
+                    <span class="text-[11px]">左メイン (フェード)</span>
+                </button>
+                <button class="tab-btn py-3 flex flex-col items-center gap-1 transition" data-tab="text-tab">
+                    <i class="fa-solid fa-font text-base"></i>
+                    <span class="text-[11px]">追加文字</span>
+                </button>
+                <button class="tab-btn py-3 flex flex-col items-center gap-1 transition" data-tab="bg-tab">
+                    <i class="fa-solid fa-palette text-base"></i>
+                    <span class="text-[11px]">背景グラデ</span>
+                </button>
+            </div>
+
+            <div class="flex-1 overflow-y-auto p-4 space-y-4">
+
+                <div id="sub-img-tab" class="tab-content space-y-4">
+                    <div class="bg-zinc-950 p-3 rounded-xl border border-zinc-800 space-y-1">
+                        <div class="flex items-center justify-between">
+                            <h2 class="text-xs font-bold text-zinc-200 flex items-center gap-2">
+                                <i class="fa-solid fa-square-plus text-pink-500"></i>
+                                右サブ画像 ＋ 左付属画像 ＋「×数量」
+                            </h2>
+                            <span id="subCountBadge" class="text-[10px] font-mono bg-pink-950 text-pink-300 px-2 py-0.5 rounded-full border border-pink-800/50">0枚</span>
+                        </div>
+                        <p class="text-[11px] text-zinc-400">
+                            右側の黒背景部分に「[左付属画像] + [サブ画像] + [×数量]」の順で特大配置されます。
+                        </p>
+                    </div>
+
+                    <!-- Upload Sub Images -->
+                    <div id="subDropZone" class="border-2 border-dashed border-zinc-700 hover:border-pink-500 rounded-xl p-4 text-center bg-zinc-950/60 hover:bg-zinc-950 transition cursor-pointer active:scale-[0.99]">
+                        <input type="file" id="subImgInput" accept="image/*" multiple class="hidden">
+                        <i class="fa-solid fa-cloud-arrow-up text-2xl text-pink-400 mb-1"></i>
+                        <p class="text-xs font-bold text-zinc-200">＋ サブ画像を追加 (一括複数選択可)</p>
+                        <p class="text-[10px] text-zinc-500 mt-0.5">タップして複数の画像を選択できます</p>
+                    </div>
+
+                    <!-- Sub Items List -->
+                    <div class="space-y-2">
+                        <label class="text-xs font-bold text-zinc-400 block">サブ画像管理・付属画像装着</label>
+                        <div id="subItemsList" class="space-y-2.5">
+                            <div class="p-4 bg-zinc-950 rounded-xl border border-zinc-800 text-center text-xs text-zinc-500 italic">
+                                サブ画像がありません。「＋ サブ画像を追加」から画像を選択してください。
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="main-img-tab" class="tab-content space-y-4 hidden">
+                    <div class="bg-zinc-950 p-3 rounded-xl border border-zinc-800 space-y-2">
+                        <div class="flex items-center justify-between">
+                            <h2 class="text-xs font-bold text-zinc-200 flex items-center gap-2">
+                                <i class="fa-solid fa-align-left text-purple-400"></i>
+                                左エリア用メイン画像
+                            </h2>
+                            <span id="mainCountBadge" class="text-[10px] font-mono bg-purple-950 text-purple-300 px-2 py-0.5 rounded-full border border-purple-800/50">0枚</span>
+                        </div>
+                        <p class="text-[11px] text-zinc-400">
+                            1枚時は高さ720px全開で左端特大表示。複数枚時は自動整列します。
+                        </p>
+
+                        <!-- Global Fade Toggle Feature -->
+                        <div class="flex items-center justify-between bg-zinc-900 p-2.5 rounded-lg border border-purple-900/50 mt-2">
+                            <div class="flex items-center gap-2">
+                                <i class="fa-solid fa-circle-half-stroke text-purple-400"></i>
+                                <div>
+                                    <span class="text-xs font-bold text-purple-200 block">右側60%フェード（透明化）</span>
+                                    <span class="text-[10px] text-zinc-400">画像の左60%から右端にかけて背景になじませ透明化</span>
+                                </div>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" id="globalFadeToggle" class="sr-only peer" checked>
+                                <div class="w-9 h-5 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Upload Main Images -->
+                    <div id="mainDropZone" class="border-2 border-dashed border-zinc-700 hover:border-purple-500 rounded-xl p-4 text-center bg-zinc-950/60 hover:bg-zinc-950 transition cursor-pointer active:scale-[0.99]">
+                        <input type="file" id="mainImgInput" accept="image/*" multiple class="hidden">
+                        <i class="fa-solid fa-images text-2xl text-purple-400 mb-1"></i>
+                        <p class="text-xs font-bold text-zinc-200">＋ メイン画像を追加 (一括複数選択可)</p>
+                        <p class="text-[10px] text-zinc-500 mt-0.5">複数選択可能 (透過PNG・立ち絵推奨)</p>
+                    </div>
+
+                    <!-- Main Items List -->
+                    <div class="space-y-2">
+                        <label class="text-xs font-bold text-zinc-400 block">メイン画像一覧</label>
+                        <div id="mainItemsList" class="space-y-2.5">
+                            <div class="p-4 bg-zinc-950 rounded-xl border border-zinc-800 text-center text-xs text-zinc-500 italic">
+                                メイン画像がありません。「＋ メイン画像を追加」から選択してください。
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="text-tab" class="tab-content space-y-4 hidden">
+                    <div class="bg-zinc-950 p-3 rounded-xl border border-zinc-800">
+                        <h2 class="text-xs font-bold text-zinc-200 flex items-center gap-2">
+                            <i class="fa-solid fa-font text-amber-400"></i>
+                            追加タイトル文字 (任意)
+                        </h2>
+                        <p class="text-[11px] text-zinc-400 mt-1">
+                            初期状態は文字無しです。必要に応じて中央上部に見出しを追加できます。
+                        </p>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-2">
+                        <button id="addHeaderBtn" class="py-2.5 bg-amber-500 hover:bg-amber-400 text-zinc-950 rounded-xl font-black text-xs transition flex items-center justify-center gap-1.5 shadow">
+                            <i class="fa-solid fa-plus"></i>
+                            <span>見出しテキスト追加</span>
+                        </button>
+                        <button id="clearTextBtn" class="py-2.5 bg-zinc-800 hover:bg-zinc-700 text-rose-300 rounded-xl font-bold text-xs border border-zinc-700 transition flex items-center justify-center gap-1.5">
+                            <i class="fa-solid fa-trash-can"></i>
+                            <span>文字を消去</span>
+                        </button>
+                    </div>
+
+                    <div id="extraTextControls" class="space-y-3 pt-2 border-t border-zinc-800 hidden">
+                        <div>
+                            <label class="text-[11px] text-zinc-400 font-bold block mb-1">テキスト変更</label>
+                            <input type="text" id="textInput" placeholder="文字を入力..." class="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:border-pink-500">
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-2">
+                            <div>
+                                <label class="text-[11px] text-zinc-400 font-bold block mb-1">文字色</label>
+                                <div class="flex items-center gap-2 bg-zinc-950 p-1 rounded-lg border border-zinc-800">
+                                    <input type="color" id="textColor" value="#ffffff" class="w-7 h-7 rounded border-0 bg-transparent cursor-pointer">
+                                    <span id="textColorHex" class="text-[10px] font-mono text-zinc-400">#FFFFFF</span>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="text-[11px] text-zinc-400 font-bold block mb-1">フチ色 (Stroke)</label>
+                                <div class="flex items-center gap-2 bg-zinc-950 p-1 rounded-lg border border-zinc-800">
+                                    <input type="color" id="textStrokeColor" value="#000000" class="w-7 h-7 rounded border-0 bg-transparent cursor-pointer">
+                                    <span id="textStrokeHex" class="text-[10px] font-mono text-zinc-400">#000000</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="bg-tab" class="tab-content space-y-4 hidden">
+                    <div class="bg-zinc-950 p-3 rounded-xl border border-zinc-800">
+                        <h2 class="text-xs font-bold text-zinc-200 flex items-center gap-2">
+                            <i class="fa-solid fa-palette text-purple-400"></i>
+                            背景グラデーション設定
+                        </h2>
+                        <p class="text-[11px] text-zinc-400 mt-1">初期設定: 左(紫) → 左中央(ピンク) → 右(黒)</p>
+                    </div>
+
+                    <div class="space-y-2.5">
+                        <div class="flex items-center justify-between bg-zinc-950 p-2 rounded-xl border border-zinc-800">
+                            <span class="text-xs text-zinc-300 font-bold">1. 左側の色 (紫)</span>
+                            <div class="flex items-center gap-2">
+                                <input type="color" id="bgStartColor" value="#8b5cf6" class="w-8 h-8 rounded border-0 bg-transparent cursor-pointer">
+                                <span id="bgStartHex" class="text-xs font-mono text-purple-400">#8B5CF6</span>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-between bg-zinc-950 p-2 rounded-xl border border-zinc-800">
+                            <span class="text-xs text-zinc-300 font-bold">2. 左中央の色 (ピンク)</span>
+                            <div class="flex items-center gap-2">
+                                <input type="color" id="bgMidColor" value="#ec4899" class="w-8 h-8 rounded border-0 bg-transparent cursor-pointer">
+                                <span id="bgMidHex" class="text-xs font-mono text-pink-400">#EC4899</span>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-between bg-zinc-950 p-2 rounded-xl border border-zinc-800">
+                            <span class="text-xs text-zinc-300 font-bold">3. 右側の色 (黒)</span>
+                            <div class="flex items-center gap-2">
+                                <input type="color" id="bgEndColor" value="#0a0a0f" class="w-8 h-8 rounded border-0 bg-transparent cursor-pointer">
+                                <span id="bgEndHex" class="text-xs font-mono text-zinc-400">#0A0A0F</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="pt-2">
+                        <div class="flex justify-between text-xs text-zinc-400 mb-1">
+                            <span>ピンクの位置</span>
+                            <span id="midPosVal">45%</span>
+                        </div>
+                        <input type="range" id="midPosSlider" min="10" max="80" value="45" class="w-full">
+                    </div>
+                </div>
+
+            </div>
+
+        </aside>
+
+    </main>
+
+    <!-- Hidden Attached Image File Input -->
+    <input type="file" id="attachImgInput" accept="image/*" class="hidden">
+
+    <!-- Toast Notification -->
+    <div id="toast" class="fixed bottom-4 left-1/2 -translate-x-1/2 bg-zinc-900 border border-zinc-700 text-zinc-200 px-4 py-2.5 rounded-full shadow-2xl transition-all duration-300 translate-y-16 opacity-0 flex items-center gap-2 z-50 pointer-events-none text-xs font-bold">
+        <i id="toastIcon" class="fa-solid fa-circle-check text-pink-400"></i>
+        <span id="toastMsg">通知</span>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const canvas = new fabric.Canvas('thumbnailCanvas', {
+                width: 1280, height: 720, preserveObjectStacking: true, selection: false
+            });
+            let mainItems = [], subItems = [], headerText = null;
+            const $ = id => document.getElementById(id);
+            const colors = { start: '#8b5cf6', mid: '#ec4899', end: '#0a0a0f', midPos: 45 };
+
+            function hex(id, key) {
+                const el = $(id); if (!el) return;
+                colors[key] = el.value;
+                const label = $(id.replace('Color','Hex'));
+                if (label) label.textContent = el.value.toUpperCase();
+                render();
+            }
+            function fitImage(img, box, object) {
+                const scale = Math.max(box.w / img.width, box.h / img.height);
+                object.set({ left: box.x + (box.w - img.width * scale) / 2, top: box.y + (box.h - img.height * scale) / 2, scaleX: scale, scaleY: scale });
+                object.clipPath = new fabric.Rect({ left: box.x, top: box.y, width: box.w, height: box.h, absolutePositioned: true });
+            }
+            function loadFabric(data, box, opacity=1) {
+                return new Promise(resolve => fabric.Image.fromURL(data, img => { fitImage(img, box, img); img.set({ opacity, selectable: false, evented: false }); resolve(img); }, { crossOrigin: 'anonymous' }));
+            }
+            function gradient() {
+                return new fabric.Gradient({ type: 'linear', coords: { x1: 0, y1: 0, x2: 1280, y2: 0 }, colorStops: [
+                    { offset: 0, color: colors.start }, { offset: colors.midPos / 100, color: colors.mid }, { offset: 1, color: colors.end }
+                ]});
+            }
+            function renderBackground() {
+                canvas.backgroundColor = gradient();
+                canvas.renderAll();
+            }
+            async function render() {
+                canvas.clear();
+                canvas.setBackgroundColor(gradient(), canvas.renderAll.bind(canvas));
+                if (mainItems.length) {
+                    const width = 760 / mainItems.length;
+                    for (let i=0; i<mainItems.length; i++) {
+                        const item = mainItems[i], box = { x: i*width, y: 0, w: width, h: 720 };
+                        const img = await loadFabric(item.data, box);
+                        canvas.add(img);
+                        if ($('globalFadeToggle')?.checked) {
+                            const fade = new fabric.Rect({ left: box.x + box.w*0.58, top: 0, width: box.w*0.42, height: 720, selectable:false, evented:false, fill:new fabric.Gradient({type:'linear',coords:{x1:0,y1:0,x2:box.w*0.42,y2:0},colorStops:[{offset:0,color:'rgba(10,10,15,0)'},{offset:1,color:'rgba(10,10,15,0.92)'}]}) });
+                            canvas.add(fade);
+                        }
+                    }
+                }
+                const rightX = 770, gap = 12, cellW = 490, cellH = subItems.length ? Math.min(690, (690 - gap*(subItems.length-1))/subItems.length) : 690;
+                for (let i=0; i<subItems.length; i++) {
+                    const item = subItems[i], y = 15 + i*(cellH+gap);
+                    const img = await loadFabric(item.data, {x:rightX,y,w:cellW,h:cellH}); canvas.add(img);
+                    if (item.attachment) { const att = await loadFabric(item.attachment, {x:rightX+10,y:y+cellH-105,w:95,h:95}); canvas.add(att); }
+                    if (item.qty && item.qty > 1) canvas.add(new fabric.Text(`×${item.qty}`, { left:rightX+cellW-120, top:y+cellH-100, fontFamily:'Noto Sans JP', fontSize:72, fontWeight:'900', fill:'#fff', stroke:'#000', strokeWidth:10, paintFirst:'stroke', selectable:false, evented:false }));
+                }
+                if (headerText) { headerText.set({ left: 640, top: 26 }); canvas.add(headerText); }
+                canvas.renderAll(); updateBadges();
+            }
+            function updateBadges() { if ($('mainCountBadge')) $('mainCountBadge').textContent = `${mainItems.length}枚`; if ($('subCountBadge')) $('subCountBadge').textContent = `${subItems.length}枚`; }
+            function dataURL(file) { return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(file); }); }
+            function list(type) {
+                const arr = type === 'main' ? mainItems : subItems, el = $(type === 'main' ? 'mainItemsList' : 'subItemsList');
+                if (!el) return;
+                if (!arr.length) { el.innerHTML = `<div class="p-4 bg-zinc-950 rounded-xl border border-zinc-800 text-center text-xs text-zinc-500 italic">画像がありません。</div>`; return; }
+                el.innerHTML = arr.map((x,i)=>`<div class="flex items-center gap-2 p-2 bg-zinc-950 rounded-lg border border-zinc-800"><img src="${x.data}" class="w-12 h-12 object-cover rounded"><span class="text-xs text-zinc-300 flex-1 truncate">${type==='main'?'メイン':'サブ'} ${i+1}</span>${type==='sub'?`<input data-qty="${i}" type="number" min="1" value="${x.qty||1}" class="w-14 bg-zinc-900 border border-zinc-700 rounded p-1 text-xs text-center">`:''}<button data-del="${type}:${i}" class="text-rose-400 px-2"><i class="fa-solid fa-trash"></i></button></div>`).join('');
+                el.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{ const [t,i]=b.dataset.del.split(':'); (t==='main'?mainItems:subItems).splice(+i,1); list(t); render(); });
+                el.querySelectorAll('[data-qty]').forEach(i=>i.onchange=()=>{ subItems[+i.dataset.qty].qty=Math.max(1,+i.value||1); render(); });
+            }
+            async function addFiles(input, type) { for (const file of input.files) { const data=await dataURL(file); (type==='main'?mainItems:subItems).push({data, qty:1, attachment:null}); } list(type); render(); input.value=''; }
+            $('mainDropZone')?.addEventListener('click',()=> $('mainImgInput').click());
+            $('subDropZone')?.addEventListener('click',()=> $('subImgInput').click());
+            $('mainImgInput')?.addEventListener('change',e=>addFiles(e.target,'main'));
+            $('subImgInput')?.addEventListener('change',e=>addFiles(e.target,'sub'));
+            $('globalFadeToggle')?.addEventListener('change',render);
+            ['bgStartColor','bgMidColor','bgEndColor'].forEach((id,i)=>$(id)?.addEventListener('input',()=>hex(id,['start','mid','end'][i])));
+            $('midPosSlider')?.addEventListener('input',e=>{colors.midPos=+e.target.value; $('midPosVal').textContent=`${colors.midPos}%`; render();});
+            document.querySelectorAll('.tab-btn').forEach(btn=>btn.onclick=()=>{ document.querySelectorAll('.tab-btn').forEach(x=>x.classList.remove('active')); document.querySelectorAll('.tab-content').forEach(x=>x.classList.add('hidden')); btn.classList.add('active'); $(btn.dataset.tab)?.classList.remove('hidden'); });
+            $('addHeaderBtn')?.addEventListener('click',()=>{ if(!headerText){ headerText=new fabric.Text('タイトルを入力', {fontFamily:'Noto Sans JP',fontSize:64,fontWeight:'900',fill:'#fff',stroke:'#000',strokeWidth:12,paintFirst:'stroke',originX:'center',selectable:false,evented:false}); } $('extraTextControls').classList.remove('hidden'); $('textInput').value=headerText.text; render(); });
+            $('textInput')?.addEventListener('input',e=>{if(headerText){headerText.set('text',e.target.value);render();}});
+            $('textColor')?.addEventListener('input',e=>{if(headerText){headerText.set('fill',e.target.value);$('textColorHex').textContent=e.target.value.toUpperCase();render();}});
+            $('textStrokeColor')?.addEventListener('input',e=>{if(headerText){headerText.set('stroke',e.target.value);$('textStrokeHex').textContent=e.target.value.toUpperCase();render();}});
+            $('clearTextBtn')?.addEventListener('click',()=>{headerText=null;$('extraTextControls')?.classList.add('hidden');render();});
+            $('resetCanvasBtn')?.addEventListener('click',()=>{mainItems=[];subItems=[];headerText=null;list('main');list('sub');render();});
+            $('downloadBtn')?.addEventListener('click',()=>{ canvas.discardActiveObject(); canvas.renderAll(); const a=document.createElement('a'); a.download='thumbnail-studio-pro.png'; a.href=canvas.toDataURL({format:'png',multiplier:1}); a.click(); });
+            renderBackground(); updateBadges();
+        });
+    </script>
+</body>
+</html>
