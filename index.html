@@ -379,6 +379,17 @@
             const $ = id => document.getElementById(id);
             const colors = { start: '#8b5cf6', mid: '#ec4899', end: '#0a0a0f', midPos: 45 };
 
+            // Fabric.jsの内部解像度は1280x720のまま、表示だけ枠に合わせて縮小する
+            function fitPreviewCanvas() {
+                const frame = $('canvasScaler');
+                if (!frame || !frame.clientWidth) return;
+                const scale = frame.clientWidth / 1280;
+                canvas.setDimensions({ width: 1280 * scale, height: 720 * scale }, { cssOnly: true });
+                canvas.calcOffset();
+            }
+            window.addEventListener('resize', fitPreviewCanvas);
+            requestAnimationFrame(fitPreviewCanvas);
+
             function hex(id, key) {
                 const el = $(id); if (!el) return;
                 colors[key] = el.value;
