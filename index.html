@@ -375,7 +375,7 @@
             const canvas = new fabric.Canvas('thumbnailCanvas', {
                 width: 1280, height: 720, preserveObjectStacking: true, selection: false
             });
-            let mainItems = [], subItems = [], headerText = null;
+            let mainItems = [], subItems = [], headerText = null, attachIndex = null;
             const $ = id => document.getElementById(id);
             const colors = { start: '#8b5cf6', mid: '#ec4899', end: '#0a0a0f', midPos: 45 };
 
@@ -432,8 +432,9 @@
                 const rightX = 770, gap = 12, cellW = 490, cellH = subItems.length ? Math.min(690, (690 - gap*(subItems.length-1))/subItems.length) : 690;
                 for (let i=0; i<subItems.length; i++) {
                     const item = subItems[i], y = 15 + i*(cellH+gap);
-                    const img = await loadFabric(item.data, {x:rightX,y,w:cellW,h:cellH}); canvas.add(img);
-                    if (item.attachment) { const att = await loadFabric(item.attachment, {x:rightX+10,y:y+cellH-105,w:95,h:95}); canvas.add(att); }
+                    const attachedW = item.attachment ? 110 : 0;
+                    const img = await loadFabric(item.data, {x:rightX+attachedW,y,w:cellW-attachedW,h:cellH}); canvas.add(img);
+                    if (item.attachment) { const att = await loadFabric(item.attachment, {x:rightX+5,y:y+cellH-105,w:95,h:95}); canvas.add(att); }
                     if (item.qty >= 1) canvas.add(new fabric.Text(`×${item.qty}`, { left:rightX+cellW-120, top:y+cellH-100, fontFamily:'Noto Sans JP', fontSize:72, fontWeight:'900', fill:'#fff', stroke:'#000', strokeWidth:10, paintFirst:'stroke', selectable:false, evented:false }));
                 }
                 if (headerText) { headerText.set({ left: 640, top: 26 }); canvas.add(headerText); }
@@ -445,15 +446,21 @@
                 const arr = type === 'main' ? mainItems : subItems, el = $(type === 'main' ? 'mainItemsList' : 'subItemsList');
                 if (!el) return;
                 if (!arr.length) { el.innerHTML = `<div class="p-4 bg-zinc-950 rounded-xl border border-zinc-800 text-center text-xs text-zinc-500 italic">画像がありません。</div>`; return; }
-                el.innerHTML = arr.map((x,i)=>`<div class="flex items-center gap-2 p-2 bg-zinc-950 rounded-lg border border-zinc-800"><img src="${x.data}" class="w-12 h-12 object-cover rounded"><span class="text-xs text-zinc-300 flex-1 truncate">${type==='main'?'メイン':'サブ'} ${i+1}</span>${type==='sub'?`<input data-qty="${i}" type="number" min="1" value="${x.qty||1}" class="w-14 bg-zinc-900 border border-zinc-700 rounded p-1 text-xs text-center">`:''}<button data-del="${type}:${i}" class="text-rose-400 px-2"><i class="fa-solid fa-trash"></i></button></div>`).join('');
+                el.innerHTML = arr.map((x,i)=>`<div class="flex items-center gap-2 p-2 bg-zinc-950 rounded-lg border border-zinc-800"><img src="${x.data}" class="w-12 h-12 object-cover rounded"><span class="text-xs text-zinc-300 flex-1 truncate">${type==='main'?'メイン':'サブ'} ${i+1}</span>${type==='sub'?`<button data-attach="${i}" class="text-[10px] ${x.attachment?'text-pink-300':'text-zinc-400'} px-1"><i class="fa-solid fa-paperclip"></i> ${x.attachment?'付属済み':'付属画像'}</button><input data-qty="${i}" type="number" min="1" value="${x.qty||1}" class="w-14 bg-zinc-900 border border-zinc-700 rounded p-1 text-xs text-center">`:''}<button data-del="${type}:${i}" class="text-rose-400 px-2"><i class="fa-solid fa-trash"></i></button></div>`).join('');
                 el.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{ const [t,i]=b.dataset.del.split(':'); (t==='main'?mainItems:subItems).splice(+i,1); list(t); render(); });
                 el.querySelectorAll('[data-qty]').forEach(i=>i.onchange=()=>{ subItems[+i.dataset.qty].qty=Math.max(1,+i.value||1); render(); });
+                el.querySelectorAll('[data-attach]').forEach(b=>b.onclick=()=>{ attachIndex=+b.dataset.attach; $('attachImgInput').click(); });
             }
             async function addFiles(input, type) { for (const file of input.files) { const data=await dataURL(file); (type==='main'?mainItems:subItems).push({data, qty:1, attachment:null}); } list(type); render(); input.value=''; }
             $('mainDropZone')?.addEventListener('click',()=> $('mainImgInput').click());
             $('subDropZone')?.addEventListener('click',()=> $('subImgInput').click());
             $('mainImgInput')?.addEventListener('change',e=>addFiles(e.target,'main'));
             $('subImgInput')?.addEventListener('change',e=>addFiles(e.target,'sub'));
+            $('attachImgInput')?.addEventListener('change',async e=>{
+                if (attachIndex === null || !e.target.files[0]) return;
+                subItems[attachIndex].attachment = await dataURL(e.target.files[0]);
+                list('sub'); render(); attachIndex = null; e.target.value = '';
+            });
             $('globalFadeToggle')?.addEventListener('change',render);
             ['bgStartColor','bgMidColor','bgEndColor'].forEach((id,i)=>$(id)?.addEventListener('input',()=>hex(id,['start','mid','end'][i])));
             $('midPosSlider')?.addEventListener('input',e=>{colors.midPos=+e.target.value; $('midPosVal').textContent=`${colors.midPos}%`; render();});
