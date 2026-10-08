@@ -58,19 +58,8 @@
         }
 
         .canvas-container {
-            position: absolute !important;
-            inset: 0 !important;
-            width: 100% !important;
-            height: 100% !important;
-            margin: 0 !important;
+            margin: 0 auto !important;
             transform-origin: top left;
-        }
-
-        /* Fabric.jsの内部キャンバスをプレビュー枠に合わせて縮小表示 */
-        .canvas-scaler-wrapper canvas {
-            display: block;
-            width: 100% !important;
-            height: 100% !important;
         }
 
         /* Custom Scrollbar */
@@ -372,107 +361,801 @@
 
     <script>
         document.addEventListener('DOMContentLoaded', () => {
+
+            // Initialize Fabric Canvas (1280x720 base)
             const canvas = new fabric.Canvas('thumbnailCanvas', {
-                width: 1280, height: 720, preserveObjectStacking: true, selection: false
+                width: 1280,
+                height: 720,
+                preserveObjectStacking: true,
+                selection: false
             });
-            let mainItems = [], subItems = [], headerText = null, attachIndex = null;
-            const $ = id => document.getElementById(id);
-            const colors = { start: '#8b5cf6', mid: '#ec4899', end: '#0a0a0f', midPos: 45 };
 
-            // Fabric.jsの内部解像度は1280x720のまま、表示だけ枠に合わせて縮小する
-            function fitPreviewCanvas() {
-                const frame = $('canvasScaler');
-                if (!frame || !frame.clientWidth) return;
-                const scale = frame.clientWidth / 1280;
-                canvas.setDimensions({ width: 1280 * scale, height: 720 * scale }, { cssOnly: true });
-                canvas.calcOffset();
-            }
-            window.addEventListener('resize', fitPreviewCanvas);
-            requestAnimationFrame(fitPreviewCanvas);
+            // State management
+            let mainItems = []; // Array of { id, fileData, imgElement, fabricImg, fadeEnabled }
+            let subItems = [];  // Array of { id, fileData, fabricImg, count, attachedData, attachedFabricImg }
+            let extraTextObjects = [];
+            let activeAttachSubItemId = null;
+            let globalFade60 = true; // Global toggle for 60% right fade
 
-            function hex(id, key) {
-                const el = $(id); if (!el) return;
-                colors[key] = el.value;
-                const label = $(id.replace('Color','Hex'));
-                if (label) label.textContent = el.value.toUpperCase();
-                render();
+            // Background Gradient State
+            const bgState = {
+                color1: '#8b5cf6',
+                color2: '#ec4899',
+                color3: '#0a0a0f',
+                midPos: 0.45
+            };
+
+            function resizeCanvasDisplay() {
+                const scaler = document.getElementById('canvasScaler');
+                if (!scaler) return;
+                const containerWidth = scaler.clientWidth;
+                const scale = containerWidth / 1280;
+                
+                const canvasContainer = document.querySelector('.canvas-container');
+                if (canvasContainer) {
+                    canvasContainer.style.transform = `scale(${scale})`;
+                    scaler.style.height = `${720 * scale}px`;
+                }
             }
-            function fitImage(img, box, object) {
-                const scale = Math.max(box.w / img.width, box.h / img.height);
-                object.set({ left: box.x + (box.w - img.width * scale) / 2, top: box.y + (box.h - img.height * scale) / 2, scaleX: scale, scaleY: scale });
-                object.clipPath = new fabric.Rect({ left: box.x, top: box.y, width: box.w, height: box.h, absolutePositioned: true });
+
+            window.addEventListener('resize', resizeCanvasDisplay);
+            setTimeout(resizeCanvasDisplay, 100);
+
+            // Update Background Gradient
+            function updateCanvasBackground() {
+                const gradient = new fabric.Gradient({
+                    type: 'linear',
+                    coords: { x1: 0, y1: 0, x2: canvas.width, y2: 0 },
+                    colorStops: [
+                        { offset: 0, color: bgState.color1 },
+                        { offset: bgState.midPos, color: bgState.color2 },
+                        { offset: 0.82, color: bgState.color3 },
+                        { offset: 1.0, color: bgState.color3 }
+                    ]
+                });
+
+                canvas.setBackgroundColor(gradient, canvas.renderAll.bind(canvas));
             }
-            function loadFabric(data, box, opacity=1) {
-                return new Promise(resolve => fabric.Image.fromURL(data, img => { fitImage(img, box, img); img.set({ opacity, selectable: false, evented: false }); resolve(img); }, { crossOrigin: 'anonymous' }));
+
+            /**
+             * 画像の左60%から右端にかけてグラデーション透明化（フェード）マスクを適用するヘルパー関数
+             */
+            function createFadedCanvas(imgElement) {
+                const w = imgElement.naturalWidth || imgElement.width;
+                const h = imgElement.naturalHeight || imgElement.height;
+
+                const offscreen = document.createElement('canvas');
+                offscreen.width = w;
+                offscreen.height = h;
+                const ctx = offscreen.getContext('2d');
+
+                // 1. 元画像を描画
+                ctx.drawImage(imgElement, 0, 0);
+
+                // 2. destination-in モードで左60%〜100%のアルファグラデーションを適用
+                ctx.globalCompositeOperation = 'destination-in';
+                const grad = ctx.createLinearGradient(w * 0.6, 0, w, 0);
+                grad.addColorStop(0, 'rgba(0, 0, 0, 1)');
+                grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, w, h);
+
+                return offscreen;
             }
-            function gradient() {
-                return new fabric.Gradient({ type: 'linear', coords: { x1: 0, y1: 0, x2: 1280, y2: 0 }, colorStops: [
-                    { offset: 0, color: colors.start }, { offset: colors.midPos / 100, color: colors.mid }, { offset: 1, color: colors.end }
-                ]});
+
+            /**
+             * メイン画像のFabric.Imageを最新状態（フェードON/OFF）で生成
+             */
+            function createFabricImageForMain(item) {
+                return new Promise((resolve) => {
+                    const isFaded = globalFade60 && item.fadeEnabled;
+
+                    if (isFaded) {
+                        const fadedCanvas = createFadedCanvas(item.imgElement);
+                        fabric.Image.fromURL(fadedCanvas.toDataURL(), (fImg) => {
+                            resolve(fImg);
+                        });
+                    } else {
+                        const fImg = new fabric.Image(item.imgElement);
+                        resolve(fImg);
+                    }
+                });
             }
-            function renderBackground() {
-                canvas.backgroundColor = gradient();
+
+            /**
+             * 確定レイアウトの再構成エンジン
+             */
+            async function relayoutCanvas() {
+                canvas.clear();
+                updateCanvasBackground();
+
+                // --- 1. 左側メイン画像レイアウト ---
+                let maxMainX = 0;
+
+                if (mainItems.length === 1) {
+                    const item = mainItems[0];
+                    const img = await createFabricImageForMain(item);
+                    const scale = 720 / img.height;
+                    const imgW = img.width * scale;
+
+                    img.set({
+                        left: 0,
+                        top: 0,
+                        scaleX: scale,
+                        scaleY: scale,
+                        originX: 'left',
+                        originY: 'top',
+                        selectable: false,
+                        evented: false,
+                        hasControls: false,
+                        hasBorders: false
+                    });
+
+                    canvas.add(img);
+                    maxMainX = imgW;
+
+                } else if (mainItems.length > 1) {
+                    const columns = [];
+                    for (let i = 0; i < mainItems.length; i += 4) {
+                        columns.push(mainItems.slice(i, i + 4));
+                    }
+
+                    let curX = 0;
+                    for (let colItems of columns) {
+                        const rowCount = colItems.length;
+                        const rowH = 720 / rowCount;
+                        let colMaxW = 0;
+
+                        for (let rowIdx = 0; rowIdx < colItems.length; rowIdx++) {
+                            const item = colItems[rowIdx];
+                            const img = await createFabricImageForMain(item);
+                            const scale = rowH / img.height;
+                            const imgW = img.width * scale;
+
+                            if (imgW > colMaxW) colMaxW = imgW;
+
+                            img.set({
+                                left: curX,
+                                top: rowIdx * rowH,
+                                scaleX: scale,
+                                scaleY: scale,
+                                originX: 'left',
+                                originY: 'top',
+                                selectable: false,
+                                evented: false,
+                                hasControls: false,
+                                hasBorders: false
+                            });
+
+                            canvas.add(img);
+                        }
+
+                        curX += colMaxW + 8;
+                    }
+
+                    maxMainX = curX;
+                }
+
+                // --- 2. 右側 [左付属画像] + [サブ画像] + [×数量] レイアウト ---
+                if (subItems.length > 0) {
+                    const subCount = subItems.length;
+                    const subAreaStartX = Math.max(880, maxMainX + 25);
+
+                    const availH = 680;
+                    const rowH = Math.min(210, availH / subCount);
+                    const startY = (720 - (rowH * subCount)) / 2;
+
+                    subItems.forEach((item, idx) => {
+                        const centerY = startY + (idx * rowH) + (rowH / 2);
+                        let offsetX = subAreaStartX;
+
+                        // A. 左付属画像が存在する場合
+                        if (item.attachedFabricImg) {
+                            const attImgH = Math.min(110, rowH * 0.65);
+                            const attScale = attImgH / item.attachedFabricImg.height;
+                            const attW = item.attachedFabricImg.width * attScale;
+
+                            item.attachedFabricImg.set({
+                                left: offsetX,
+                                top: centerY,
+                                scaleX: attScale,
+                                scaleY: attScale,
+                                originX: 'left',
+                                originY: 'center',
+                                selectable: false,
+                                evented: false,
+                                hasControls: false,
+                                hasBorders: false
+                            });
+
+                            canvas.add(item.attachedFabricImg);
+                            offsetX += attW + 12;
+                        }
+
+                        // B. メインサブ画像 (1.3倍サイズ)
+                        const targetImgH = Math.min(145, rowH * 0.82);
+                        const targetImgW = 160;
+
+                        const scale = Math.min(targetImgW / item.fabricImg.width, targetImgH / item.fabricImg.height);
+                        const scaledW = item.fabricImg.width * scale;
+
+                        item.fabricImg.set({
+                            left: offsetX,
+                            top: centerY,
+                            scaleX: scale,
+                            scaleY: scale,
+                            originX: 'left',
+                            originY: 'center',
+                            selectable: false,
+                            evented: false,
+                            hasControls: false,
+                            hasBorders: false
+                        });
+
+                        canvas.add(item.fabricImg);
+                        offsetX += scaledW + 16;
+
+                        // C. 「× 数量」テキスト (paintFirst: 'stroke' でつぶれ回避)
+                        const fontSize = Math.min(56, Math.max(40, rowH * 0.45));
+                        
+                        const numText = new fabric.Text(`× ${item.count}`, {
+                            left: offsetX,
+                            top: centerY,
+                            fontSize: fontSize,
+                            fontFamily: 'M PLUS Rounded 1c',
+                            fontWeight: '900',
+                            fill: '#ffffff',
+                            stroke: '#000000',
+                            strokeWidth: 8,
+                            strokeLineJoin: 'round',
+                            paintFirst: 'stroke',
+                            originX: 'left',
+                            originY: 'center',
+                            selectable: false,
+                            evented: false,
+                            hasControls: false,
+                            hasBorders: false
+                        });
+
+                        canvas.add(numText);
+                    });
+                }
+
+                // --- 3. 追加テキストの描画 ---
+                extraTextObjects.forEach(textObj => {
+                    canvas.add(textObj);
+                });
+
                 canvas.renderAll();
             }
-            async function render() {
-                canvas.clear();
-                canvas.setBackgroundColor(gradient(), canvas.renderAll.bind(canvas));
-                if (mainItems.length) {
-                    const width = 760 / mainItems.length;
-                    for (let i=0; i<mainItems.length; i++) {
-                        const item = mainItems[i], box = { x: i*width, y: 0, w: width, h: 720 };
-                        const img = await loadFabric(item.data, box);
-                        canvas.add(img);
-                        if ($('globalFadeToggle')?.checked) {
-                            const fade = new fabric.Rect({ left: box.x + box.w*0.58, top: 0, width: box.w*0.42, height: 720, selectable:false, evented:false, fill:new fabric.Gradient({type:'linear',coords:{x1:0,y1:0,x2:box.w*0.42,y2:0},colorStops:[{offset:0,color:'rgba(10,10,15,0)'},{offset:1,color:'rgba(10,10,15,0.92)'}]}) });
-                            canvas.add(fade);
+
+            function loadImageElement(dataUrl) {
+                return new Promise((resolve) => {
+                    const img = new Image();
+                    img.onload = () => resolve(img);
+                    img.src = dataUrl;
+                });
+            }
+
+            function loadFabricImage(dataUrl) {
+                return new Promise((resolve) => {
+                    fabric.Image.fromURL(dataUrl, (img) => {
+                        resolve(img);
+                    });
+                });
+            }
+
+            function readFileAsDataURL(file) {
+                return new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => resolve(e.target.result);
+                    reader.readAsDataURL(file);
+                });
+            }
+
+            // --- メイン画像一括追加処理 ---
+            async function addMainImages(files) {
+                showToast(`${files.length}枚のメイン画像を処理中...`);
+                
+                const newItems = [];
+                for (let file of Array.from(files)) {
+                    const dataUrl = await readFileAsDataURL(file);
+                    const imgElement = await loadImageElement(dataUrl);
+                    
+                    const itemId = 'main_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+                    newItems.push({
+                        id: itemId,
+                        fileData: dataUrl,
+                        imgElement: imgElement,
+                        fadeEnabled: true
+                    });
+                }
+
+                mainItems = mainItems.concat(newItems);
+                await relayoutCanvas();
+                renderMainItemsUI();
+                showToast(`${files.length}枚のメイン画像を追加しました`);
+            }
+
+            function renderMainItemsUI() {
+                const listContainer = document.getElementById('mainItemsList');
+                document.getElementById('mainCountBadge').textContent = `${mainItems.length}枚`;
+
+                if (mainItems.length === 0) {
+                    listContainer.innerHTML = `
+                        <div class="p-4 bg-zinc-950 rounded-xl border border-zinc-800 text-center text-xs text-zinc-500 italic">
+                            メイン画像がありません。「＋ メイン画像を追加」から選択してください。
+                        </div>
+                    `;
+                    return;
+                }
+
+                listContainer.innerHTML = '';
+                mainItems.forEach((item, index) => {
+                    const posText = mainItems.length === 1 ? '全高 100% (720px) 特大表示' : `第 ${index + 1} 番目`;
+
+                    const card = document.createElement('div');
+                    card.className = 'p-3 bg-zinc-950 rounded-xl border border-zinc-800 space-y-2';
+                    card.innerHTML = `
+                        <div class="flex items-center justify-between gap-3">
+                            <div class="flex items-center gap-2.5">
+                                <img src="${item.fileData}" class="w-12 h-12 object-contain bg-zinc-900 rounded-lg border border-zinc-800 shrink-0">
+                                <div>
+                                    <span class="text-[11px] text-zinc-300 font-bold block">メイン画像 #${index + 1}</span>
+                                    <span class="text-[10px] text-purple-400 font-mono">${posText}</span>
+                                </div>
+                            </div>
+
+                            <div class="flex items-center gap-1">
+                                <button class="move-main-up p-1.5 text-zinc-400 hover:text-white" data-id="${item.id}" title="上へ"><i class="fa-solid fa-chevron-up text-xs"></i></button>
+                                <button class="move-main-down p-1.5 text-zinc-400 hover:text-white" data-id="${item.id}" title="下へ"><i class="fa-solid fa-chevron-down text-xs"></i></button>
+                                <button class="delete-main-btn p-1.5 text-rose-400 hover:text-rose-300 ml-1" data-id="${item.id}" title="削除"><i class="fa-solid fa-trash-can text-xs"></i></button>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-between bg-zinc-900/60 px-2.5 py-1.5 rounded-lg border border-zinc-800 text-[11px]">
+                            <span class="text-zinc-400 font-bold">右側60%フェード</span>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" class="item-fade-toggle sr-only peer" data-id="${item.id}" ${item.fadeEnabled ? 'checked' : ''}>
+                                <div class="w-7 h-4 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-purple-500"></div>
+                            </label>
+                        </div>
+                    `;
+                    listContainer.appendChild(card);
+                });
+
+                // Attach Events for main items
+                listContainer.querySelectorAll('.item-fade-toggle').forEach(chk => {
+                    chk.addEventListener('change', async (e) => {
+                        const id = e.target.getAttribute('data-id');
+                        const item = mainItems.find(m => m.id === id);
+                        if (item) {
+                            item.fadeEnabled = e.target.checked;
+                            await relayoutCanvas();
                         }
-                    }
-                }
-                const rightX = 770, gap = 12, cellW = 490, cellH = subItems.length ? Math.min(690, (690 - gap*(subItems.length-1))/subItems.length) : 690;
-                for (let i=0; i<subItems.length; i++) {
-                    const item = subItems[i], y = 15 + i*(cellH+gap);
-                    const attachedW = item.attachment ? 110 : 0;
-                    const img = await loadFabric(item.data, {x:rightX+attachedW,y,w:cellW-attachedW,h:cellH}); canvas.add(img);
-                    if (item.attachment) { const att = await loadFabric(item.attachment, {x:rightX+5,y:y+cellH-105,w:95,h:95}); canvas.add(att); }
-                    if (item.qty >= 1) canvas.add(new fabric.Text(`×${item.qty}`, { left:rightX+cellW-120, top:y+cellH-100, fontFamily:'Noto Sans JP', fontSize:72, fontWeight:'900', fill:'#fff', stroke:'#000', strokeWidth:10, paintFirst:'stroke', selectable:false, evented:false }));
-                }
-                if (headerText) { headerText.set({ left: 640, top: 26 }); canvas.add(headerText); }
-                canvas.renderAll(); updateBadges();
+                    });
+                });
+
+                listContainer.querySelectorAll('.delete-main-btn').forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
+                        const id = e.target.closest('button').getAttribute('data-id');
+                        mainItems = mainItems.filter(m => m.id !== id);
+                        await relayoutCanvas();
+                        renderMainItemsUI();
+                        showToast('メイン画像を削除しました');
+                    });
+                });
+
+                listContainer.querySelectorAll('.move-main-up').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        const id = e.target.closest('button').getAttribute('data-id');
+                        moveMainItem(id, -1);
+                    });
+                });
+
+                listContainer.querySelectorAll('.move-main-down').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        const id = e.target.closest('button').getAttribute('data-id');
+                        moveMainItem(id, 1);
+                    });
+                });
             }
-            function updateBadges() { if ($('mainCountBadge')) $('mainCountBadge').textContent = `${mainItems.length}枚`; if ($('subCountBadge')) $('subCountBadge').textContent = `${subItems.length}枚`; }
-            function dataURL(file) { return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(file); }); }
-            function list(type) {
-                const arr = type === 'main' ? mainItems : subItems, el = $(type === 'main' ? 'mainItemsList' : 'subItemsList');
-                if (!el) return;
-                if (!arr.length) { el.innerHTML = `<div class="p-4 bg-zinc-950 rounded-xl border border-zinc-800 text-center text-xs text-zinc-500 italic">画像がありません。</div>`; return; }
-                el.innerHTML = arr.map((x,i)=>`<div class="flex items-center gap-2 p-2 bg-zinc-950 rounded-lg border border-zinc-800"><img src="${x.data}" class="w-12 h-12 object-cover rounded"><span class="text-xs text-zinc-300 flex-1 truncate">${type==='main'?'メイン':'サブ'} ${i+1}</span>${type==='sub'?`<button data-attach="${i}" class="text-[10px] ${x.attachment?'text-pink-300':'text-zinc-400'} px-1"><i class="fa-solid fa-paperclip"></i> ${x.attachment?'付属済み':'付属画像'}</button><input data-qty="${i}" type="number" min="1" value="${x.qty||1}" class="w-14 bg-zinc-900 border border-zinc-700 rounded p-1 text-xs text-center">`:''}<button data-del="${type}:${i}" class="text-rose-400 px-2"><i class="fa-solid fa-trash"></i></button></div>`).join('');
-                el.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{ const [t,i]=b.dataset.del.split(':'); (t==='main'?mainItems:subItems).splice(+i,1); list(t); render(); });
-                el.querySelectorAll('[data-qty]').forEach(i=>i.onchange=()=>{ subItems[+i.dataset.qty].qty=Math.max(1,+i.value||1); render(); });
-                el.querySelectorAll('[data-attach]').forEach(b=>b.onclick=()=>{ attachIndex=+b.dataset.attach; $('attachImgInput').click(); });
+
+            async function moveMainItem(id, dir) {
+                const idx = mainItems.findIndex(m => m.id === id);
+                if (idx < 0) return;
+                const newIdx = idx + dir;
+                if (newIdx >= 0 && newIdx < mainItems.length) {
+                    const temp = mainItems[idx];
+                    mainItems[idx] = mainItems[newIdx];
+                    mainItems[newIdx] = temp;
+                    await relayoutCanvas();
+                    renderMainItemsUI();
+                }
             }
-            async function addFiles(input, type) { for (const file of input.files) { const data=await dataURL(file); (type==='main'?mainItems:subItems).push({data, qty:1, attachment:null}); } list(type); render(); input.value=''; }
-            $('mainDropZone')?.addEventListener('click',()=> $('mainImgInput').click());
-            $('subDropZone')?.addEventListener('click',()=> $('subImgInput').click());
-            $('mainImgInput')?.addEventListener('change',e=>addFiles(e.target,'main'));
-            $('subImgInput')?.addEventListener('change',e=>addFiles(e.target,'sub'));
-            $('attachImgInput')?.addEventListener('change',async e=>{
-                if (attachIndex === null || !e.target.files[0]) return;
-                subItems[attachIndex].attachment = await dataURL(e.target.files[0]);
-                list('sub'); render(); attachIndex = null; e.target.value = '';
+
+            // Global Fade Toggle Change
+            document.getElementById('globalFadeToggle').addEventListener('change', async (e) => {
+                globalFade60 = e.target.checked;
+                await relayoutCanvas();
+                showToast(globalFade60 ? '60%フェードを有効化しました' : 'フェードをオフにしました');
             });
-            $('globalFadeToggle')?.addEventListener('change',render);
-            ['bgStartColor','bgMidColor','bgEndColor'].forEach((id,i)=>$(id)?.addEventListener('input',()=>hex(id,['start','mid','end'][i])));
-            $('midPosSlider')?.addEventListener('input',e=>{colors.midPos=+e.target.value; $('midPosVal').textContent=`${colors.midPos}%`; render();});
-            document.querySelectorAll('.tab-btn').forEach(btn=>btn.onclick=()=>{ document.querySelectorAll('.tab-btn').forEach(x=>x.classList.remove('active')); document.querySelectorAll('.tab-content').forEach(x=>x.classList.add('hidden')); btn.classList.add('active'); $(btn.dataset.tab)?.classList.remove('hidden'); });
-            $('addHeaderBtn')?.addEventListener('click',()=>{ if(!headerText){ headerText=new fabric.Text('タイトルを入力', {fontFamily:'Noto Sans JP',fontSize:64,fontWeight:'900',fill:'#fff',stroke:'#000',strokeWidth:12,paintFirst:'stroke',originX:'center',selectable:false,evented:false}); } $('extraTextControls').classList.remove('hidden'); $('textInput').value=headerText.text; render(); });
-            $('textInput')?.addEventListener('input',e=>{if(headerText){headerText.set('text',e.target.value);render();}});
-            $('textColor')?.addEventListener('input',e=>{if(headerText){headerText.set('fill',e.target.value);$('textColorHex').textContent=e.target.value.toUpperCase();render();}});
-            $('textStrokeColor')?.addEventListener('input',e=>{if(headerText){headerText.set('stroke',e.target.value);$('textStrokeHex').textContent=e.target.value.toUpperCase();render();}});
-            $('clearTextBtn')?.addEventListener('click',()=>{headerText=null;$('extraTextControls')?.classList.add('hidden');render();});
-            $('resetCanvasBtn')?.addEventListener('click',()=>{mainItems=[];subItems=[];headerText=null;list('main');list('sub');render();});
-            $('downloadBtn')?.addEventListener('click',()=>{ canvas.discardActiveObject(); canvas.renderAll(); const a=document.createElement('a'); a.download='thumbnail-studio-pro.png'; a.href=canvas.toDataURL({format:'png',multiplier:1}); a.click(); });
-            renderBackground(); updateBadges();
+
+            const mainDropZone = document.getElementById('mainDropZone');
+            const mainImgInput = document.getElementById('mainImgInput');
+
+            mainDropZone.addEventListener('click', () => mainImgInput.click());
+            mainImgInput.addEventListener('change', (e) => {
+                if (e.target.files && e.target.files.length > 0) {
+                    addMainImages(e.target.files);
+                    mainImgInput.value = '';
+                }
+            });
+
+            // --- サブ画像一括追加処理 ---
+            async function addSubImages(files) {
+                showToast(`${files.length}枚のサブ画像を読み込み中...`);
+                
+                const newItems = [];
+                for (let file of Array.from(files)) {
+                    const dataUrl = await readFileAsDataURL(file);
+                    const fabricImg = await loadFabricImage(dataUrl);
+                    
+                    const itemId = 'sub_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+                    newItems.push({
+                        id: itemId,
+                        fileData: dataUrl,
+                        fabricImg: fabricImg,
+                        count: 2,
+                        attachedData: null,
+                        attachedFabricImg: null
+                    });
+                }
+
+                subItems = subItems.concat(newItems);
+                await relayoutCanvas();
+                renderSubItemsUI();
+                showToast(`${files.length}枚のサブ画像を追加しました`);
+            }
+
+            function renderSubItemsUI() {
+                const listContainer = document.getElementById('subItemsList');
+                document.getElementById('subCountBadge').textContent = `${subItems.length}枚`;
+
+                if (subItems.length === 0) {
+                    listContainer.innerHTML = `
+                        <div class="p-4 bg-zinc-950 rounded-xl border border-zinc-800 text-center text-xs text-zinc-500 italic">
+                            サブ画像がありません。「＋ サブ画像を追加」ボタンから画像を選択してください。
+                        </div>
+                    `;
+                    return;
+                }
+
+                listContainer.innerHTML = '';
+                subItems.forEach((item, index) => {
+                    const card = document.createElement('div');
+                    card.className = 'p-3 bg-zinc-950 rounded-xl border border-zinc-800 space-y-2.5';
+
+                    const attachHTML = item.attachedData ? `
+                        <div class="flex items-center gap-2 bg-pink-950/40 p-1.5 rounded-lg border border-pink-800/50">
+                            <img src="${item.attachedData}" class="w-8 h-8 object-contain bg-zinc-900 rounded border border-pink-700/50">
+                            <span class="text-[10px] text-pink-300 font-bold flex-1">左付属画像 装着中</span>
+                            <button class="remove-attach-btn text-rose-400 hover:text-rose-200 text-xs px-1.5 py-0.5" data-id="${item.id}" title="付属画像を取り消し">
+                                <i class="fa-solid fa-xmark"></i>
+                            </button>
+                        </div>
+                    ` : `
+                        <button class="add-attach-btn w-full py-1.5 px-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 rounded-lg text-[11px] font-bold border border-zinc-800 hover:border-pink-500/50 transition flex items-center justify-center gap-1.5" data-id="${item.id}">
+                            <i class="fa-solid fa-plus text-pink-400"></i>
+                            <span>👈 左側に付属画像(アイコン/枠)を追加</span>
+                        </button>
+                    `;
+
+                    card.innerHTML = `
+                        <div class="flex items-center justify-between gap-3">
+                            <div class="flex items-center gap-2.5">
+                                <img src="${item.fileData}" class="w-12 h-12 object-contain bg-zinc-900 rounded-lg border border-zinc-800 shrink-0">
+                                <div>
+                                    <span class="text-[11px] text-zinc-400 font-bold block">サブ画像 #${index + 1}</span>
+                                    <div class="flex items-center gap-1 mt-1">
+                                        <span class="text-xs text-zinc-300 font-bold">数量:</span>
+                                        <button class="count-minus-btn w-6 h-6 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded flex items-center justify-center text-xs font-bold" data-id="${item.id}">-</button>
+                                        <input type="number" min="1" max="99" value="${item.count}" class="count-input w-10 text-center bg-zinc-900 border border-zinc-700 rounded text-xs font-black text-pink-400 py-0.5" data-id="${item.id}">
+                                        <button class="count-plus-btn w-6 h-6 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded flex items-center justify-center text-xs font-bold" data-id="${item.id}">+</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="flex items-center gap-1">
+                                <button class="move-sub-up p-1.5 text-zinc-400 hover:text-white" data-id="${item.id}" title="上へ"><i class="fa-solid fa-chevron-up text-xs"></i></button>
+                                <button class="move-sub-down p-1.5 text-zinc-400 hover:text-white" data-id="${item.id}" title="下へ"><i class="fa-solid fa-chevron-down text-xs"></i></button>
+                                <button class="delete-sub-btn p-1.5 text-rose-400 hover:text-rose-300 ml-1" data-id="${item.id}" title="削除"><i class="fa-solid fa-trash-can text-xs"></i></button>
+                            </div>
+                        </div>
+
+                        ${attachHTML}
+                    `;
+                    listContainer.appendChild(card);
+                });
+
+                // Attach Events for sub items
+                listContainer.querySelectorAll('.count-input').forEach(input => {
+                    input.addEventListener('change', (e) => {
+                        const id = e.target.getAttribute('data-id');
+                        const val = Math.max(1, parseInt(e.target.value) || 1);
+                        updateSubCount(id, val);
+                    });
+                });
+
+                listContainer.querySelectorAll('.count-minus-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        const id = e.target.getAttribute('data-id');
+                        const item = subItems.find(s => s.id === id);
+                        if (item && item.count > 1) updateSubCount(id, item.count - 1);
+                    });
+                });
+
+                listContainer.querySelectorAll('.count-plus-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        const id = e.target.getAttribute('data-id');
+                        const item = subItems.find(s => s.id === id);
+                        if (item) updateSubCount(id, item.count + 1);
+                    });
+                });
+
+                listContainer.querySelectorAll('.delete-sub-btn').forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
+                        const id = e.target.closest('button').getAttribute('data-id');
+                        subItems = subItems.filter(s => s.id !== id);
+                        await relayoutCanvas();
+                        renderSubItemsUI();
+                        showToast('サブ画像を削除しました');
+                    });
+                });
+
+                listContainer.querySelectorAll('.move-sub-up').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        const id = e.target.closest('button').getAttribute('data-id');
+                        moveSubItem(id, -1);
+                    });
+                });
+
+                listContainer.querySelectorAll('.move-sub-down').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        const id = e.target.closest('button').getAttribute('data-id');
+                        moveSubItem(id, 1);
+                    });
+                });
+
+                listContainer.querySelectorAll('.add-attach-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        activeAttachSubItemId = e.target.closest('button').getAttribute('data-id');
+                        document.getElementById('attachImgInput').click();
+                    });
+                });
+
+                listContainer.querySelectorAll('.remove-attach-btn').forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
+                        const id = e.target.closest('button').getAttribute('data-id');
+                        const item = subItems.find(s => s.id === id);
+                        if (item) {
+                            item.attachedData = null;
+                            item.attachedFabricImg = null;
+                            await relayoutCanvas();
+                            renderSubItemsUI();
+                            showToast('付属画像を取り消しました');
+                        }
+                    });
+                });
+            }
+
+            const attachImgInput = document.getElementById('attachImgInput');
+            attachImgInput.addEventListener('change', async (e) => {
+                if (e.target.files && e.target.files.length > 0 && activeAttachSubItemId) {
+                    const file = e.target.files[0];
+                    const dataUrl = await readFileAsDataURL(file);
+                    const fabricImg = await loadFabricImage(dataUrl);
+
+                    const item = subItems.find(s => s.id === activeAttachSubItemId);
+                    if (item) {
+                        item.attachedData = dataUrl;
+                        item.attachedFabricImg = fabricImg;
+                        await relayoutCanvas();
+                        renderSubItemsUI();
+                        showToast('左側に付属画像を装着しました');
+                    }
+                    attachImgInput.value = '';
+                    activeAttachSubItemId = null;
+                }
+            });
+
+            async function updateSubCount(id, newCount) {
+                const item = subItems.find(s => s.id === id);
+                if (item) {
+                    item.count = newCount;
+                    await relayoutCanvas();
+                    renderSubItemsUI();
+                }
+            }
+
+            async function moveSubItem(id, dir) {
+                const idx = subItems.findIndex(s => s.id === id);
+                if (idx < 0) return;
+                const newIdx = idx + dir;
+                if (newIdx >= 0 && newIdx < subItems.length) {
+                    const temp = subItems[idx];
+                    subItems[idx] = subItems[newIdx];
+                    subItems[newIdx] = temp;
+                    await relayoutCanvas();
+                    renderSubItemsUI();
+                }
+            }
+
+            const subDropZone = document.getElementById('subDropZone');
+            const subImgInput = document.getElementById('subImgInput');
+
+            subDropZone.addEventListener('click', () => subImgInput.click());
+            subImgInput.addEventListener('change', (e) => {
+                if (e.target.files && e.target.files.length > 0) {
+                    addSubImages(e.target.files);
+                    subImgInput.value = '';
+                }
+            });
+
+            // --- 追加テキスト処理 ---
+            async function addExtraText(str) {
+                const text = new fabric.Text(str, {
+                    left: 640,
+                    top: 60,
+                    originX: 'center',
+                    fontSize: 56,
+                    fontFamily: 'M PLUS Rounded 1c',
+                    fontWeight: '900',
+                    fill: '#ffffff',
+                    stroke: '#000000',
+                    strokeWidth: 8,
+                    strokeLineJoin: 'round',
+                    paintFirst: 'stroke',
+                    selectable: false,
+                    evented: false
+                });
+
+                extraTextObjects.push(text);
+                await relayoutCanvas();
+
+                document.getElementById('extraTextControls').classList.remove('hidden');
+                document.getElementById('textInput').value = str;
+                showToast('タイトル文字を追加しました');
+            }
+
+            document.getElementById('addHeaderBtn').addEventListener('click', () => addExtraText('タイトル文字'));
+
+            document.getElementById('clearTextBtn').addEventListener('click', async () => {
+                extraTextObjects = [];
+                document.getElementById('extraTextControls').classList.add('hidden');
+                await relayoutCanvas();
+                showToast('文字を消去しました');
+            });
+
+            document.getElementById('textInput').addEventListener('input', (e) => {
+                if (extraTextObjects.length > 0) {
+                    extraTextObjects[extraTextObjects.length - 1].set('text', e.target.value);
+                    canvas.renderAll();
+                }
+            });
+
+            document.getElementById('textColor').addEventListener('input', (e) => {
+                if (extraTextObjects.length > 0) {
+                    extraTextObjects[extraTextObjects.length - 1].set('fill', e.target.value);
+                    document.getElementById('textColorHex').textContent = e.target.value.toUpperCase();
+                    canvas.renderAll();
+                }
+            });
+
+            document.getElementById('textStrokeColor').addEventListener('input', (e) => {
+                if (extraTextObjects.length > 0) {
+                    extraTextObjects[extraTextObjects.length - 1].set('stroke', e.target.value);
+                    document.getElementById('textStrokeHex').textContent = e.target.value.toUpperCase();
+                    canvas.renderAll();
+                }
+            });
+
+            // --- 背景グラデーションコントロール ---
+            document.getElementById('bgStartColor').addEventListener('input', (e) => {
+                bgState.color1 = e.target.value;
+                document.getElementById('bgStartHex').textContent = e.target.value.toUpperCase();
+                updateCanvasBackground();
+            });
+
+            document.getElementById('bgMidColor').addEventListener('input', (e) => {
+                bgState.color2 = e.target.value;
+                document.getElementById('bgMidHex').textContent = e.target.value.toUpperCase();
+                updateCanvasBackground();
+            });
+
+            document.getElementById('bgEndColor').addEventListener('input', (e) => {
+                bgState.color3 = e.target.value;
+                document.getElementById('bgEndHex').textContent = e.target.value.toUpperCase();
+                updateCanvasBackground();
+            });
+
+            document.getElementById('midPosSlider').addEventListener('input', (e) => {
+                bgState.midPos = e.target.value / 100;
+                document.getElementById('midPosVal').textContent = `${e.target.value}%`;
+                updateCanvasBackground();
+            });
+
+            // --- タブ切り替え ---
+            const tabBtns = document.querySelectorAll('.tab-btn');
+            const tabContents = document.querySelectorAll('.tab-content');
+
+            tabBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    tabBtns.forEach(b => b.classList.remove('active'));
+                    tabContents.forEach(c => c.classList.add('hidden'));
+
+                    btn.classList.add('active');
+                    const tabId = btn.getAttribute('data-tab');
+                    document.getElementById(tabId).classList.remove('hidden');
+                });
+            });
+
+            // --- 全リセット ---
+            document.getElementById('resetCanvasBtn').addEventListener('click', async () => {
+                mainItems = [];
+                subItems = [];
+                extraTextObjects = [];
+                renderMainItemsUI();
+                renderSubItemsUI();
+                document.getElementById('extraTextControls').classList.add('hidden');
+                await relayoutCanvas();
+                showToast('全リセット完了しました');
+            });
+
+            // --- 何度でも連続ダウンロード可能な保存処理 ---
+            document.getElementById('downloadBtn').addEventListener('click', async () => {
+                // キャンバス最新状態を確実レンダリング
+                await relayoutCanvas();
+
+                // キャンバスから直接高画質PNGを取得
+                const dataURL = canvas.toDataURL({
+                    format: 'png',
+                    quality: 1.0,
+                    multiplier: 1
+                });
+
+                // 一時アンカー要素を作成して安全に発火・即破棄
+                const link = document.createElement('a');
+                link.download = `thumbnail-${Date.now()}.png`;
+                link.href = dataURL;
+                document.body.appendChild(link);
+                link.click();
+                
+                // 遅延削除で複数回・連続ダウンロードを確実にサポート
+                setTimeout(() => {
+                    if (document.body.contains(link)) {
+                        document.body.removeChild(link);
+                    }
+                }, 200);
+
+                showToast('高画質PNG画像を保存しました！');
+            });
+
+            // --- トースト表示 ---
+            function showToast(msg) {
+                const toast = document.getElementById('toast');
+                const toastMsg = document.getElementById('toastMsg');
+
+                toastMsg.textContent = msg;
+                toast.classList.remove('translate-y-16', 'opacity-0');
+                setTimeout(() => {
+                    toast.classList.add('translate-y-16', 'opacity-0');
+                }, 2500);
+            }
+
+            // 初回レンダリング
+            relayoutCanvas();
         });
     </script>
 </body>
