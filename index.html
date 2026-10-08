@@ -58,8 +58,19 @@
         }
 
         .canvas-container {
-            margin: 0 auto !important;
+            position: absolute !important;
+            inset: 0 !important;
+            width: 100% !important;
+            height: 100% !important;
+            margin: 0 !important;
             transform-origin: top left;
+        }
+
+        /* Fabric.jsの内部キャンバスをプレビュー枠に合わせて縮小表示 */
+        .canvas-scaler-wrapper canvas {
+            display: block;
+            width: 100% !important;
+            height: 100% !important;
         }
 
         /* Custom Scrollbar */
