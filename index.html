@@ -412,7 +412,7 @@
                     const item = subItems[i], y = 15 + i*(cellH+gap);
                     const img = await loadFabric(item.data, {x:rightX,y,w:cellW,h:cellH}); canvas.add(img);
                     if (item.attachment) { const att = await loadFabric(item.attachment, {x:rightX+10,y:y+cellH-105,w:95,h:95}); canvas.add(att); }
-                    if (item.qty && item.qty > 1) canvas.add(new fabric.Text(`×${item.qty}`, { left:rightX+cellW-120, top:y+cellH-100, fontFamily:'Noto Sans JP', fontSize:72, fontWeight:'900', fill:'#fff', stroke:'#000', strokeWidth:10, paintFirst:'stroke', selectable:false, evented:false }));
+                    if (item.qty >= 1) canvas.add(new fabric.Text(`×${item.qty}`, { left:rightX+cellW-120, top:y+cellH-100, fontFamily:'Noto Sans JP', fontSize:72, fontWeight:'900', fill:'#fff', stroke:'#000', strokeWidth:10, paintFirst:'stroke', selectable:false, evented:false }));
                 }
                 if (headerText) { headerText.set({ left: 640, top: 26 }); canvas.add(headerText); }
                 canvas.renderAll(); updateBadges();
