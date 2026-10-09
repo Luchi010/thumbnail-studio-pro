@@ -93,6 +93,22 @@
         .toggle-checkbox:checked + .toggle-label {
             background-color: #ec4899;
         }
+
+        /* 別サムネ縦長プレビュー */
+        .stack-preview-shell {
+            max-height: 55vh;
+            overflow-y: auto;
+            background: #0a0a0f;
+            border: 1px solid #27272a;
+            border-radius: 12px;
+            padding: 8px;
+        }
+        #stackCanvas {
+            display: block;
+            width: 100%;
+            height: auto;
+            border-radius: 8px;
+        }
     </style>
 </head>
 <body class="bg-zinc-950 text-zinc-100 min-h-screen flex flex-col antialiased">
@@ -151,7 +167,7 @@
         <aside class="w-full lg:w-2/5 bg-zinc-900 flex flex-col flex-1 overflow-hidden h-[55vh] lg:h-auto">
             
             <!-- Navigation Tabs -->
-            <div class="grid grid-cols-4 bg-zinc-950 border-b border-zinc-800 text-xs font-bold text-zinc-400">
+            <div class="grid grid-cols-5 bg-zinc-950 border-b border-zinc-800 text-xs font-bold text-zinc-400">
                 <button class="tab-btn active py-3 flex flex-col items-center gap-1 transition" data-tab="sub-img-tab">
                     <i class="fa-solid fa-list-ol text-base"></i>
                     <span class="text-[11px]">右サブ (付属＆×)</span>
@@ -167,6 +183,10 @@
                 <button class="tab-btn py-3 flex flex-col items-center gap-1 transition" data-tab="bg-tab">
                     <i class="fa-solid fa-palette text-base"></i>
                     <span class="text-[11px]">背景グラデ</span>
+                </button>
+                <button class="tab-btn py-3 flex flex-col items-center gap-1 transition" data-tab="stack-tab">
+                    <i class="fa-solid fa-layer-group text-base"></i>
+                    <span class="text-[11px]">別サムネ</span>
                 </button>
             </div>
 
@@ -344,6 +364,35 @@
                     </div>
                 </div>
 
+                <div id="stack-tab" class="tab-content space-y-4 hidden">
+                    <div class="bg-zinc-950 p-3 rounded-xl border border-zinc-800 space-y-1">
+                        <h2 class="text-xs font-bold text-zinc-200 flex items-center gap-2">
+                            <i class="fa-solid fa-layer-group text-pink-400"></i>
+                            別サムネ（縦長結合）
+                        </h2>
+                        <p class="text-[11px] text-zinc-400">画像を複数選ぶと、アップロード順に上から縦へ連結して1枚の長い画像にします。</p>
+                    </div>
+
+                    <div id="stackDropZone" class="border-2 border-dashed border-zinc-700 hover:border-pink-500 rounded-xl p-4 text-center bg-zinc-950/60 hover:bg-zinc-950 transition cursor-pointer active:scale-[0.99]">
+                        <input type="file" id="stackImgInput" accept="image/*" multiple class="hidden">
+                        <i class="fa-solid fa-images text-2xl text-pink-400 mb-1"></i>
+                        <p class="text-xs font-bold text-zinc-200">＋ 別サムネ画像を追加</p>
+                        <p class="text-[10px] text-zinc-500 mt-0.5">複数選択可能・上から順に縦連結</p>
+                    </div>
+
+                    <div class="flex items-center justify-between">
+                        <span id="stackCountBadge" class="text-[10px] font-mono bg-pink-950 text-pink-300 px-2 py-0.5 rounded-full border border-pink-800/50">0枚</span>
+                        <button id="stackDownloadBtn" class="px-3 py-1.5 rounded-lg bg-gradient-to-r from-pink-500 to-purple-600 text-white text-xs font-bold flex items-center gap-1.5">
+                            <i class="fa-solid fa-download"></i> 縦長PNGを保存
+                        </button>
+                    </div>
+
+                    <div class="stack-preview-shell">
+                        <canvas id="stackCanvas" width="1280" height="720"></canvas>
+                    </div>
+                    <div id="stackItemsList" class="space-y-2"></div>
+                </div>
+
             </div>
 
         </aside>
@@ -375,6 +424,7 @@
             let subItems = [];  // Array of { id, fileData, fabricImg, count, attachedData, attachedFabricImg }
             let extraTextObjects = [];
             let activeAttachSubItemId = null;
+            let stackItems = []; // 別サムネ用の縦連結画像（アップロード順）
             let globalFade60 = true; // Global toggle for 60% right fade
 
             // Background Gradient State
@@ -1086,6 +1136,79 @@
                 updateCanvasBackground();
             });
 
+            // --- 別サムネ（縦長結合） ---
+            const stackCanvas = document.getElementById('stackCanvas');
+            const stackCtx = stackCanvas.getContext('2d');
+            const stackImgInput = document.getElementById('stackImgInput');
+            const stackDropZone = document.getElementById('stackDropZone');
+
+            function drawStackCover(ctx, img, x, y, w, h) {
+                const scale = Math.max(w / img.naturalWidth, h / img.naturalHeight);
+                const sw = w / scale, sh = h / scale;
+                const sx = (img.naturalWidth - sw) / 2, sy = (img.naturalHeight - sh) / 2;
+                ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h);
+            }
+
+            async function renderStackedThumbnail() {
+                if (!stackCanvas) return;
+                const tileH = 720;
+                stackCanvas.width = 1280;
+                stackCanvas.height = Math.max(tileH, stackItems.length * tileH);
+                stackCtx.fillStyle = '#0a0a0f';
+                stackCtx.fillRect(0, 0, stackCanvas.width, stackCanvas.height);
+
+                for (let i = 0; i < stackItems.length; i++) {
+                    const img = await loadImageElement(stackItems[i]);
+                    drawStackCover(stackCtx, img, 0, i * tileH, 1280, tileH);
+                    if (i > 0) {
+                        stackCtx.fillStyle = 'rgba(0,0,0,.28)';
+                        stackCtx.fillRect(0, i * tileH, 1280, 3);
+                    }
+                }
+                document.getElementById('stackCountBadge').textContent = `${stackItems.length}枚 / ${Math.max(1, stackItems.length) * 720}px`;
+                renderStackItemsUI();
+            }
+
+            function renderStackItemsUI() {
+                const list = document.getElementById('stackItemsList');
+                if (!stackItems.length) {
+                    list.innerHTML = '<div class="p-3 rounded-lg border border-zinc-800 bg-zinc-950 text-center text-xs text-zinc-500">画像を追加すると、ここに上から順番に並びます。</div>';
+                    return;
+                }
+                list.innerHTML = stackItems.map((data, i) => `
+                    <div class="flex items-center gap-2 p-2 rounded-lg border border-zinc-800 bg-zinc-950">
+                        <img src="${data}" class="w-12 h-8 object-cover rounded">
+                        <span class="text-xs text-zinc-300 flex-1">${i + 1}枚目</span>
+                        <button data-stack-action="up" data-stack-index="${i}" class="px-1.5 text-zinc-400" ${i === 0 ? 'disabled' : ''}><i class="fa-solid fa-chevron-up"></i></button>
+                        <button data-stack-action="down" data-stack-index="${i}" class="px-1.5 text-zinc-400" ${i === stackItems.length - 1 ? 'disabled' : ''}><i class="fa-solid fa-chevron-down"></i></button>
+                        <button data-stack-action="delete" data-stack-index="${i}" class="px-1.5 text-rose-400"><i class="fa-solid fa-trash-can"></i></button>
+                    </div>`).join('');
+                list.querySelectorAll('[data-stack-action]').forEach(btn => btn.addEventListener('click', async () => {
+                    const i = Number(btn.dataset.stackIndex), action = btn.dataset.stackAction;
+                    if (action === 'delete') stackItems.splice(i, 1);
+                    if (action === 'up' && i > 0) [stackItems[i - 1], stackItems[i]] = [stackItems[i], stackItems[i - 1]];
+                    if (action === 'down' && i < stackItems.length - 1) [stackItems[i + 1], stackItems[i]] = [stackItems[i], stackItems[i + 1]];
+                    await renderStackedThumbnail();
+                }));
+            }
+
+            stackDropZone.addEventListener('click', () => stackImgInput.click());
+            stackImgInput.addEventListener('change', async (e) => {
+                for (const file of Array.from(e.target.files || [])) stackItems.push(await readFileAsDataURL(file));
+                await renderStackedThumbnail();
+                if (e.target.files.length) showToast(`${e.target.files.length}枚を縦に追加しました`);
+                e.target.value = '';
+            });
+            document.getElementById('stackDownloadBtn').addEventListener('click', async () => {
+                await renderStackedThumbnail();
+                const link = document.createElement('a');
+                link.download = `stacked-thumbnail-${Date.now()}.png`;
+                link.href = stackCanvas.toDataURL('image/png');
+                link.click();
+                showToast('縦長PNG画像を保存しました！');
+            });
+            renderStackedThumbnail();
+
             // --- タブ切り替え ---
             const tabBtns = document.querySelectorAll('.tab-btn');
             const tabContents = document.querySelectorAll('.tab-content');
@@ -1106,6 +1229,8 @@
                 mainItems = [];
                 subItems = [];
                 extraTextObjects = [];
+                stackItems = [];
+                await renderStackedThumbnail();
                 renderMainItemsUI();
                 renderSubItemsUI();
                 document.getElementById('extraTextControls').classList.add('hidden');
